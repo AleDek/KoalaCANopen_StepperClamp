@@ -46,15 +46,15 @@ UNS8 Ir_led_cmd_8_bit[]=
 };	
 UNS8 Clamp_state_8_Bit[]=
 {
-	0x00	/* 0 */
+	0x01	/* 0 */
 };	
 UNS8 Crawler_state_8_Bit[]=
 {
-	0x00	/* 0 */
+	0x01	/* 0 */
 };	
 UNS8 Lock_state_8_Bit[]=
 {
-	0x00	/* 0 */
+	0x01	/* 0 */
 };
 UNS8 Ir_led_state_8_bit[]=
 {

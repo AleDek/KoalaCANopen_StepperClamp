@@ -36,6 +36,8 @@ void init_uart(void);
 void init_stepper(void);
 void init_led(void);
 
+void homing_procedure(void);
+
 
 
 #ifdef __cplusplus
@@ -44,6 +46,7 @@ extern "C" {
 
 unsigned char stepper_handler(CO_Data* d);
 unsigned char led_handler(CO_Data* d);
+unsigned char switch_handler(CO_Data* d);
 
 #ifdef __cplusplus
 }

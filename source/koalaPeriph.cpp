@@ -23,7 +23,9 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 */
 
 #include "koalaPeriph.h"
+#include "DigitalIn.h"
 #include "DigitalOut.h"
+#include "PinNamesTypes.h"
 #include "koala_OD.h"
 #include "objdictdef.h"
 #include <cstdint>
@@ -49,10 +51,10 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 /* stepper */
 #define STEPS_CLOSE_CLAMP  400000        //#regolare
 #define STEPS_OPEN_CLAMP -STEPS_CLOSE_CLAMP
-#define STEPS_CLOSE_CRAWLER  400000        //#regolare
-#define STEPS_OPEN_CRAWLER -STEPS_CLOSE_CLAMP
+#define STEPS_CLOSE_CRAWLER  600000        //#regolare
+#define STEPS_OPEN_CRAWLER -STEPS_CLOSE_CRAWLER
 #define STEPS_CLOSE_LOCK  200000        //#regolare
-#define STEPS_OPEN_LOCK -STEPS_CLOSE_CLAMP
+#define STEPS_OPEN_LOCK -STEPS_CLOSE_LOCK
 #define STATE_CLOSED 0
 #define STATE_OPEN 1
 #define STATE_CLOSING 2
@@ -69,20 +71,24 @@ StepperDriver stepper_B_crawler(B_STEP_PIN, B_DIR_PIN);
 StepperDriver stepper_C_lock(C_STEP_PIN, C_DIR_PIN);
 
 bool first_run;
+int switch_cnt;
+bool homing_in_progress;
+int homing_state;
 
 /*
 //PWM object
 PwmIn PWM_1_clamp(PWM_1_PIN);
 PwmIn PWM_2_crawler(PWM_2_PIN);
 PwmIn PWM_3_lock(PWM_3_PIN);
-//digital in object
-DigitalIn IN_1_clamp(PWM_1_PIN,PullDown);    //USED ONLY FOR DEBUG SWITCHES TO TEST Movement
-DigitalIn IN_2_crawler(PWM_2_PIN,PullDown);
-DigitalIn IN_3_lock(PWM_3_PIN,PullDown);
 */
+//digital in object
+DigitalOut led_io_1(PWM_1_PIN);    //USED ONLY FOR DEBUG SWITCHES TO TEST Movement
+DigitalOut led_io_2(PWM_2_PIN);
+DigitalOut led_io_3(PWM_3_PIN);
+DigitalIn  button_io(BUTTON_PIN,PullUp);
 
 /* hw objects*/
-Serial main_pc(USBTX, USBRX);
+//Serial main_pc(USBTX, USBRX);
 
 
 /*debug*/
@@ -154,19 +160,16 @@ void read_commands_can(int &cmd_A, int &cmd_B, int &cmd_C){
 *  PERIPHERIAL FUNCTIONS 
 */ 
 void init_uart(void){
-    main_pc.baud(115200);
+   //main_pc.baud(115200);
 }
 
 void init_stepper(void){
-    first_run = true;
-    move(stepper_A_clamp,STEPS_OPEN_CLAMP); 
-    Clamp_state_8_Bit[0]   = STATE_OPENING;
-    move(stepper_B_crawler,STEPS_OPEN_CLAMP); 
-    Crawler_state_8_Bit[0] = STATE_OPENING;
-    move(stepper_C_lock,STEPS_OPEN_CLAMP); 
-    Lock_state_8_Bit[0]    = STATE_OPENING;
-
-    printf("start homing\n");
+    switch_cnt = 0;
+    first_run = false;
+    homing_in_progress = false;
+    homing_state = -1;
+    //homing_procedure();
+    //printf("start homing\n");
     // // TODO not blocking
     // while(stepper_A_clamp.isBusy() && stepper_B_crawler.isBusy() && stepper_C_lock.isBusy() ){
     //     wait(0.1);
@@ -176,8 +179,73 @@ void init_stepper(void){
     
 }
 
+void homing_procedure(void){
+    first_run = true;
+    Clamp_cmd_8_bit[0] = 0x01;
+    Crawler_cmd_8_bit[0] = 0x01;
+    Lock_cmd_8_bit[0] = 0x01;
+    move(stepper_A_clamp,STEPS_OPEN_CLAMP); 
+    Clamp_state_8_Bit[0]   = STATE_OPENING;
+    move(stepper_B_crawler,STEPS_OPEN_CRAWLER); 
+    Crawler_state_8_Bit[0] = STATE_OPENING;
+    move(stepper_C_lock,STEPS_OPEN_LOCK); 
+    Lock_state_8_Bit[0]    = STATE_OPENING;
+}
+
 void init_led(void){
     Ir_led_state_8_bit[0]  = Ir_led_cmd_8_bit[0];
+   
+}
+
+unsigned char switch_handler(CO_Data* d){
+    if(button_io == 0){
+        switch_cnt++;
+    }
+        
+
+    if(switch_cnt >80 && !first_run && homing_state ==-1){
+        //printf("start homing\n");
+        switch_cnt = 0;
+        homing_in_progress = true;
+        homing_state = 0;
+        //homing_procedure();
+    }
+    else if(homing_state == 0){
+        //printf("homing state 0\n");
+        first_run = true;
+        Lock_cmd_8_bit[0] = 0x01;
+        move(stepper_C_lock,STEPS_OPEN_LOCK); 
+        Lock_state_8_Bit[0]    = STATE_OPENING;
+        homing_state = 1;
+    }
+    else if(homing_state == 1){
+        //printf("homing state 1\n");
+        if(!stepper_C_lock.isBusy()){
+            Lock_state_8_Bit[0]    = STATE_OPEN;
+            homing_state = 2;
+        }
+    }
+    else if(homing_state == 2){
+        //printf("homing state 2\n");
+        Clamp_cmd_8_bit[0] = 0x01;
+        Crawler_cmd_8_bit[0] = 0x01;
+        move(stepper_A_clamp,STEPS_OPEN_CLAMP); 
+        Clamp_state_8_Bit[0]   = STATE_OPENING;
+        move(stepper_B_crawler,STEPS_OPEN_CRAWLER); 
+        Crawler_state_8_Bit[0] = STATE_OPENING;
+        homing_state = 3;
+    }
+    else if(homing_state == 3){
+        //printf("homing state 1\n");
+        if(!stepper_A_clamp.isBusy() && !stepper_B_crawler.isBusy()){
+            Clamp_state_8_Bit[0]   = STATE_OPEN;
+            Crawler_state_8_Bit[0] = STATE_OPEN;
+            homing_state = -1;
+            homing_in_progress = false;
+        }
+    }
+
+    return 1;
 }
 
 unsigned char stepper_handler(CO_Data* d){
@@ -185,78 +253,80 @@ unsigned char stepper_handler(CO_Data* d){
     int cmd_B_crawler = 0;
     int cmd_C_lock = 0;
 
-    //read_commands_digital(cmd_A_clamp, cmd_B_crawler, cmd_C_lock);
-    //read_commands_pwm_single(cmd_A_clamp, cmd_B_crawler, cmd_C_lock);
-    read_commands_can(cmd_A_clamp, cmd_B_crawler, cmd_C_lock);
-    //printf("commands: [%d , %d , %d] \r\n", cmd_A_clamp, cmd_B_crawler, cmd_C_lock);//Print for debug
+    if(!homing_in_progress){
+        //read_commands_digital(cmd_A_clamp, cmd_B_crawler, cmd_C_lock);
+        //read_commands_pwm_single(cmd_A_clamp, cmd_B_crawler, cmd_C_lock);
+        read_commands_can(cmd_A_clamp, cmd_B_crawler, cmd_C_lock);
+        //printf("commands: [%d , %d , %d] \r\n", cmd_A_clamp, cmd_B_crawler, cmd_C_lock);//Print for debug
 
-    if(!stepper_A_clamp.isBusy() && !stepper_B_crawler.isBusy() && !stepper_C_lock.isBusy() ){  //if all stepper have finished their moving
-        if(first_run){
-            printf("end homing\n");
-            first_run = false;
-            Clamp_state_8_Bit[0]   = STATE_OPEN;
-            Crawler_state_8_Bit[0] = STATE_OPEN;
-            Lock_state_8_Bit[0]    = STATE_OPEN;
-            torqueOff = true;
+        if(!stepper_A_clamp.isBusy() && !stepper_B_crawler.isBusy() && !stepper_C_lock.isBusy() ){  //if all stepper have finished their moving
+            // if(first_run){
+            //     //printf("end homing\n");
+            //     first_run = false;
+            //     Clamp_state_8_Bit[0]   = STATE_OPEN;
+            //     Crawler_state_8_Bit[0] = STATE_OPEN;
+            //     Lock_state_8_Bit[0]    = STATE_OPEN;
+            //     torqueOff = true;
+            // }
+            //else{
+                
+                torqueOff = true;
+                /* CLAMP */
+                if(Clamp_state_8_Bit[0] == STATE_OPENING){
+                    Clamp_state_8_Bit[0] = STATE_OPEN; 
+                }
+                else if(Clamp_state_8_Bit[0] == STATE_CLOSING){
+                    Clamp_state_8_Bit[0] = STATE_CLOSED; 
+                }
+                else if(cmd_A_clamp == CMD_CLOSE && Clamp_state_8_Bit[0] == STATE_OPEN){
+                    //printf("clamp GO CLOSE\n");
+                    move(stepper_A_clamp,STEPS_CLOSE_CLAMP);
+                    Clamp_state_8_Bit[0] = STATE_CLOSING;
+                }
+                else if(cmd_A_clamp == CMD_OPEN && Clamp_state_8_Bit[0] == STATE_CLOSED){
+                    //printf("clamp GO OPEN\n");
+                    move(stepper_A_clamp,STEPS_OPEN_CLAMP); 
+                    Clamp_state_8_Bit[0] = STATE_OPENING;         
+                }
+                /* CRAWLER */
+                if(Crawler_state_8_Bit[0] == STATE_OPENING){
+                    Crawler_state_8_Bit[0] = STATE_OPEN; 
+                }
+                else if(Crawler_state_8_Bit[0] == STATE_CLOSING){
+                    Crawler_state_8_Bit[0] = STATE_CLOSED; 
+                }
+                else if(cmd_B_crawler == CMD_CLOSE && Crawler_state_8_Bit[0] == STATE_OPEN){
+                    //printf("crawler GO CLOSE\n");
+                    move(stepper_B_crawler,STEPS_CLOSE_CRAWLER);
+                    Crawler_state_8_Bit[0] = STATE_CLOSING;
+                }
+                else if(cmd_B_crawler == CMD_OPEN && Crawler_state_8_Bit[0] == STATE_CLOSED){
+                    //printf("crawler GO OPEN\n");
+                    move(stepper_B_crawler,STEPS_OPEN_CRAWLER);      
+                    Crawler_state_8_Bit[0] = STATE_OPENING;       
+                }
+                /* LOCK */
+                if(Lock_state_8_Bit[0] == STATE_OPENING){
+                    Lock_state_8_Bit[0] = STATE_OPEN; 
+                }
+                else if(Lock_state_8_Bit[0] == STATE_CLOSING){
+                    Lock_state_8_Bit[0] = STATE_CLOSED; 
+                }
+                else if(cmd_C_lock == CMD_CLOSE && Lock_state_8_Bit[0] == STATE_OPEN){
+                    //printf("lock GO CLOSE\n");
+                    move(stepper_C_lock,STEPS_CLOSE_LOCK);
+                    Lock_state_8_Bit[0] = STATE_CLOSING;
+                }
+                else if(cmd_C_lock == CMD_OPEN && Lock_state_8_Bit[0] == STATE_CLOSED){
+                    //printf("lock GO OPEN\n");
+                    move(stepper_C_lock,STEPS_OPEN_LOCK);      
+                    Lock_state_8_Bit[0] = STATE_OPENING;       
+                }
+            //}
         }
-        else{
-            
-            torqueOff = true;
-            /* CLAMP */
-            if(Clamp_state_8_Bit[0] == STATE_OPENING){
-                Clamp_state_8_Bit[0] = STATE_OPEN; 
-            }
-            else if(Clamp_state_8_Bit[0] == STATE_CLOSING){
-                Clamp_state_8_Bit[0] = STATE_CLOSED; 
-            }
-            else if(cmd_A_clamp == CMD_CLOSE && Clamp_state_8_Bit[0] == STATE_OPEN){
-                printf("clamp GO CLOSE\n");
-                move(stepper_A_clamp,STEPS_CLOSE_CLAMP);
-                Clamp_state_8_Bit[0] = STATE_CLOSING;
-            }
-            else if(cmd_A_clamp == CMD_OPEN && Clamp_state_8_Bit[0] == STATE_CLOSED){
-                printf("clamp GO OPEN\n");
-                move(stepper_A_clamp,STEPS_OPEN_CLAMP); 
-                Clamp_state_8_Bit[0] = STATE_OPENING;         
-            }
-            /* CRAWLER */
-            if(Crawler_state_8_Bit[0] == STATE_OPENING){
-                Crawler_state_8_Bit[0] = STATE_OPEN; 
-            }
-            else if(Crawler_state_8_Bit[0] == STATE_CLOSING){
-                Crawler_state_8_Bit[0] = STATE_CLOSED; 
-            }
-            else if(cmd_B_crawler == CMD_CLOSE && Crawler_state_8_Bit[0] == STATE_OPEN){
-                printf("crawler GO CLOSE\n");
-                move(stepper_B_crawler,STEPS_CLOSE_CRAWLER);
-                Crawler_state_8_Bit[0] = STATE_CLOSING;
-            }
-            else if(cmd_B_crawler == CMD_OPEN && Crawler_state_8_Bit[0] == STATE_CLOSED){
-                printf("crawler GO OPEN\n");
-                move(stepper_B_crawler,STEPS_OPEN_CRAWLER);      
-                Crawler_state_8_Bit[0] = STATE_OPENING;       
-            }
-            /* LOCK */
-            if(Lock_state_8_Bit[0] == STATE_OPENING){
-                Lock_state_8_Bit[0] = STATE_OPEN; 
-            }
-            else if(Lock_state_8_Bit[0] == STATE_CLOSING){
-                Lock_state_8_Bit[0] = STATE_CLOSED; 
-            }
-            else if(cmd_C_lock == CMD_CLOSE && Lock_state_8_Bit[0] == STATE_OPEN){
-                printf("lock GO CLOSE\n");
-                move(stepper_C_lock,STEPS_CLOSE_LOCK);
-                Lock_state_8_Bit[0] = STATE_CLOSING;
-            }
-            else if(cmd_C_lock == CMD_OPEN && Lock_state_8_Bit[0] == STATE_CLOSED){
-                printf("lock GO OPEN\n");
-                move(stepper_C_lock,STEPS_OPEN_LOCK);      
-                Lock_state_8_Bit[0] = STATE_OPENING;       
-            }
+        else { //else, some stepper is moving
+            //printf("stepper busy\n");
         }
-    }
-    else { //else, some stepper is moving
-        //printf("stepper busy\n");
     }
 
     // if(Clamp_state_8_Bit[0] != Clamp_cmd_8_bit[0])
@@ -275,15 +345,21 @@ unsigned char stepper_handler(CO_Data* d){
 
 
 unsigned char led_handler(CO_Data* d){
-    if(Ir_led_state_8_bit[0] != Ir_led_cmd_8_bit[0]){
-        printf("IR led: %u \n",Ir_led_cmd_8_bit[0]);
+    //if(Ir_led_state_8_bit[0] != Ir_led_cmd_8_bit[0]){
+        //printf("IR led: %u \n",Ir_led_cmd_8_bit[0]);
         if(Ir_led_cmd_8_bit[0]== 0x00){
-            printf("Turn IR led OFF\n");
+            //printf("Turn IR led OFF\n");
+            led_io_1 =0;
+            led_io_2 =0;
+            led_io_3 =0;
         }
         else{
-            printf("Turn IR led ON\n");
+            //printf("Turn IR led ON\n");
+            led_io_1 =1;
+            led_io_2 =1;
+            led_io_3 =1;
         }
-    }
+    //}
     Ir_led_state_8_bit[0]  = Ir_led_cmd_8_bit[0];
     return 1;
 }

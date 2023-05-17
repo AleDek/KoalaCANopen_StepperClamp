@@ -53,18 +53,16 @@ static Message m = Message_Initializer;
 
 int main() 
 {
-   
+    
     // initialize the helper code - just for debugging
     //initHelper();
     init_uart();
-    printf("Start can...\n");//TODO remove
+    //printf("Start can...\n");//TODO remove
     //printf("cpu freq: %u \n",SystemCoreClock);
     // start the system timer 
     SysTimer.attach_us(&serviceSysTimer, CYCLE_TIME);
 
     //MeasurementTimer.attach(&measurement_isr, 0.250); //250 ms for thermal readings
-
-
 
     // start of CANfestival stack calls
     canInit(CAN_BAUDRATE);              // Initialize the CANopen bus
@@ -91,6 +89,7 @@ int main()
             reset_sys_timer(); 
 
             /* service Koala peripherials inputs and outputs */
+            switch_handler(&mbed_slave_Data);
             stepper_handler(&mbed_slave_Data);
             led_handler(&mbed_slave_Data);
             
